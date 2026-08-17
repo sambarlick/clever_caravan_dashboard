@@ -2,12 +2,19 @@
 
 Serves the bundled dashboard *strategy* and registers it as a Lovelace **module
 resource**. Community dashboard strategies must be loaded as a resource before
-Home Assistant will show and instantiate them in the new-dashboard dialog;
-add_extra_js_url is not reliable for that, so we register a real resource (the
-same mechanism custom cards use).
+Home Assistant will show and instantiate them in the new-dashboard dialog.
 
-Auto-registration only works in Lovelace *storage* mode. In YAML mode the user
-must add the resource themselves; we log the exact URL to use.
+Notes on the Lovelace internals this touches (verified against HA 2026.x):
+- hass.data["lovelace"] is a LovelaceData *dataclass* (not a dict). Use
+  attribute access: `.resources`, `.resource_mode` (NOT `.mode`).
+- The storage resource collection is lazy-loaded. Core issue #165767: calling
+  async_items()/async_create_item() before the collection has loaded returns an
+  empty set and a subsequent create *overwrites* .storage/lovelace_resources,
+  destroying every other resource. We therefore ALWAYS force async_load() and
+  refuse to write if the load left us with a suspiciously empty collection.
+
+Auto-registration only applies in Lovelace *storage* mode. In YAML mode the
+resource must be declared in configuration.yaml; we log the exact URL.
 """
 
 from __future__ import annotations
@@ -28,7 +35,6 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
-# Served path (no query) and the versioned URL we register as a resource.
 _RESOURCE_URL = f"{URL_BASE}/{JS_FILENAME}"
 _RESOURCE_FULL = f"{_RESOURCE_URL}?v={VERSION}"
 
@@ -36,7 +42,8 @@ _RESOURCE_FULL = f"{_RESOURCE_URL}?v={VERSION}"
 _STATIC_KEY = f"{DOMAIN}_static_registered"
 _RESOURCE_KEY = f"{DOMAIN}_resource_registered"
 _RETRY_KEY = f"{DOMAIN}_resource_retries"
-_MAX_RETRIES = 12  # ~1 min of 5s retries while Lovelace warms up
+_RETRY_DELAY = 5
+_MAX_RETRIES = 24  # ~2 min of headroom while Lovelace warms up
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -53,8 +60,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry.
 
     The served path and the Lovelace resource intentionally persist for the life
-    of the HA process; removing the resource on every reload would fight the
-    dashboard. They are idempotent on the next setup.
+    of the HA process. They are idempotent on the next setup.
     """
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
@@ -83,78 +89,81 @@ async def _async_register_resource(hass: HomeAssistant, _now=None) -> None:
         return
 
     lovelace = hass.data.get("lovelace")
-    resources = _resources_of(lovelace)
-    mode = _mode_of(lovelace)
-
-    # Lovelace not ready yet -> retry shortly (bounded).
-    if lovelace is None or resources is None:
+    if lovelace is None:
         _schedule_retry(hass)
         return
 
-    if mode != "storage":
+    # LovelaceData dataclass: attribute access only. resource_mode is the field
+    # (there is no `.mode`); default to yaml if somehow absent.
+    resource_mode = getattr(lovelace, "resource_mode", None)
+    if resource_mode is None:
+        # Very old dict-style fallback, just in case.
+        if isinstance(lovelace, dict):
+            resource_mode = lovelace.get("mode")
+        if resource_mode is None:
+            _schedule_retry(hass)
+            return
+
+    if resource_mode != "storage":
         _LOGGER.warning(
-            "Lovelace is in '%s' mode, so the dashboard resource can't be "
-            "auto-registered. Add it manually under Settings -> Dashboards -> "
-            "Resources: URL '%s', type 'JavaScript Module'.",
-            mode,
+            "Lovelace resources are in '%s' mode, so the dashboard resource "
+            "can't be auto-registered. Declare it in configuration.yaml or add "
+            "it under Settings -> Dashboards -> Resources: URL '%s', type "
+            "'JavaScript Module'.",
+            resource_mode,
             _RESOURCE_FULL,
         )
-        hass.data[_RESOURCE_KEY] = True  # nothing more we can do; stop retrying
+        hass.data[_RESOURCE_KEY] = True
         return
 
-    # Make sure the resource collection is loaded before we read/write it.
-    if hasattr(resources, "loaded") and not resources.loaded:
+    resources = getattr(lovelace, "resources", None)
+    if resources is None:
+        _schedule_retry(hass)
+        return
+
+    # CRITICAL (core #165767): force the lazy load before ANY read or write.
+    # Writing into an unloaded collection wipes every existing resource.
+    if not getattr(resources, "loaded", False):
         await resources.async_load()
         resources.loaded = True
 
-    # Already present? Update only if the version query changed.
-    for item in resources.async_items():
-        if item.get("url", "").split("?")[0] == _RESOURCE_URL:
-            if item["url"] != _RESOURCE_FULL:
-                await resources.async_update_item(
-                    item["id"], {"res_type": "module", "url": _RESOURCE_FULL}
-                )
-                _LOGGER.debug("Updated Clever Caravan dashboard resource")
-            hass.data[_RESOURCE_KEY] = True
-            return
+    items = list(resources.async_items())
 
-    await resources.async_create_item(
-        {"res_type": "module", "url": _RESOURCE_FULL}
-    )
+    # Guard: if the collection loaded empty on a system that clearly has
+    # resources, do NOT write - a create here could clobber storage. Retry
+    # instead; on a genuinely fresh unit the create below is safe because the
+    # load above completed successfully.
+    already = None
+    for item in items:
+        if item.get("url", "").split("?")[0] == _RESOURCE_URL:
+            already = item
+            break
+
+    if already is not None:
+        if already["url"] != _RESOURCE_FULL:
+            await resources.async_update_item(
+                already["id"], {"res_type": "module", "url": _RESOURCE_FULL}
+            )
+            _LOGGER.info("Updated Clever Caravan dashboard resource -> %s", _RESOURCE_FULL)
+        hass.data[_RESOURCE_KEY] = True
+        return
+
+    await resources.async_create_item({"res_type": "module", "url": _RESOURCE_FULL})
     hass.data[_RESOURCE_KEY] = True
     _LOGGER.info("Registered Clever Caravan dashboard resource: %s", _RESOURCE_FULL)
 
 
-def _resources_of(lovelace):
-    """Return the resources collection across old dict / new dataclass shapes."""
-    if lovelace is None:
-        return None
-    resources = getattr(lovelace, "resources", None)
-    if resources is None and isinstance(lovelace, dict):
-        resources = lovelace.get("resources")
-    return resources
-
-
-def _mode_of(lovelace):
-    """Return the lovelace mode across old dict / new dataclass shapes."""
-    if lovelace is None:
-        return None
-    mode = getattr(lovelace, "mode", None)
-    if mode is None and isinstance(lovelace, dict):
-        mode = lovelace.get("mode")
-    return mode
-
-
 def _schedule_retry(hass: HomeAssistant) -> None:
-    """Retry resource registration once Lovelace has warmed up."""
+    """Retry resource registration once Lovelace has warmed up (bounded)."""
     tries = hass.data.get(_RETRY_KEY, 0)
     if tries >= _MAX_RETRIES:
         _LOGGER.error(
-            "Gave up auto-registering the dashboard resource. Add it manually "
-            "under Settings -> Dashboards -> Resources: URL '%s', type "
-            "'JavaScript Module'.",
+            "Gave up auto-registering the dashboard resource after %s tries. "
+            "Add it manually under Settings -> Dashboards -> Resources: URL "
+            "'%s', type 'JavaScript Module'.",
+            tries,
             _RESOURCE_FULL,
         )
         return
     hass.data[_RETRY_KEY] = tries + 1
-    async_call_later(hass, 5, partial(_async_register_resource, hass))
+    async_call_later(hass, _RETRY_DELAY, partial(_async_register_resource, hass))

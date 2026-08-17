@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "clever_caravan_dashboard"
-VERSION = "0.1.0"
+VERSION = "0.1.2"
 
 # Static HTTP mount point + filename for the bundled strategy module.
 URL_BASE = "/clever_caravan_dashboard"
