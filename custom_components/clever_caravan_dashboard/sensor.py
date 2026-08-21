@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Samuel Myers. All rights reserved.
+# Proprietary - see LICENSE. Unauthorised use, copying, or distribution prohibited.
+
 """Config sensor: the frontend-readable channel for tier + role map.
 
 The strategy resolves this entity by platform + translation_key (rename-proof),

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Samuel Myers. All rights reserved.
+# Proprietary - see LICENSE. Unauthorised use, copying, or distribution prohibited.
+
 """Constants for the Clever Caravan Dashboard integration."""
 
 from __future__ import annotations

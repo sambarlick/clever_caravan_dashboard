@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Samuel Myers. All rights reserved.
+# Proprietary - see LICENSE. Unauthorised use, copying, or distribution prohibited.
+
 """The Clever Caravan Dashboard integration.
 
 Serves the bundled dashboard *strategy* and registers it as a Lovelace **module

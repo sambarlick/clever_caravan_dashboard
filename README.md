@@ -1,4 +1,4 @@
-# Clever Caravan Dashboard
+# Clever Caravan: Dashboard
 
 Serves and auto-loads a bundled Home Assistant dashboard **strategy** that builds
 the Clever Caravan dashboard from whatever hardware a unit actually reports, gated

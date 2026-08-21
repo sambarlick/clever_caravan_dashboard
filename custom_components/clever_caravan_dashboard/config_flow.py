@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Samuel Myers. All rights reserved.
+# Proprietary - see LICENSE. Unauthorised use, copying, or distribution prohibited.
+
 """Config and options flow for Clever Caravan Dashboard."""
 
 from __future__ import annotations
