@@ -27,7 +27,6 @@ TIERS = [TIER_BASE, TIER_PREMIUM]
 OWNED_PLATFORMS = [
     "clever_caravan_power",
     "clever_caravan_tpms",
-    "clever_caravan_safety_sam_tpms",
     "clever_caravan_location",
     "clever_caravan_weather",
     "clever_caravan_waymote",
