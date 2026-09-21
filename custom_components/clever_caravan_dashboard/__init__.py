@@ -82,12 +82,13 @@ async def _async_register_static(hass: HomeAssistant) -> None:
     if hass.data.get(_STATIC_KEY):
         return
 
-    js_path = Path(__file__).parent / "frontend" / "dist" / JS_FILENAME
+    # Serve the whole dist folder: strategy module plus assets (logo etc.).
+    dist_dir = Path(__file__).parent / "frontend" / "dist"
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(_RESOURCE_URL, str(js_path), cache_headers=False)]
+        [StaticPathConfig(URL_BASE, str(dist_dir), cache_headers=False)]
     )
     hass.data[_STATIC_KEY] = True
-    _LOGGER.debug("Serving Clever Caravan dashboard module at %s", _RESOURCE_URL)
+    _LOGGER.debug("Serving Clever Caravan dashboard assets at %s", URL_BASE)
 
 
 def _resource_full(hass: HomeAssistant) -> str:
