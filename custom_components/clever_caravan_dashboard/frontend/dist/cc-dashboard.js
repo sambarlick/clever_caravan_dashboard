@@ -48,7 +48,7 @@ const BASE_CSS = `
 :host{box-sizing:border-box;--bg:#111118;--panel:#1b1f2b;--ink:#f0f0f5;--mute:#a0aec0;display:block;color:var(--ink);font-family:var(--ha-font-family-body,Roboto,sans-serif);background:var(--bg)}
 *{box-sizing:border-box}
 ha-icon{display:inline-flex}
-.v{background:rgba(255,255,255,.04);border-radius:12px;padding:8px 12px;min-width:0;display:flex;flex-direction:column;justify-content:center;cursor:pointer}
+.v{background:rgba(255,255,255,.04);border-radius:12px;padding:8px 12px;min-width:0;display:flex;flex-direction:column;justify-content:center}
 .v .l{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .v .n{font-weight:700;line-height:1.15;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .v .s{font-size:14px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -159,8 +159,7 @@ class CcBase extends HTMLElement {
   }
   _readout(label, value, { cls = "", sub = "", bar = null, barColor = "", entity = "" } = {}) {
     const b = bar === null ? "" : `<div class="bar"><i style="width:${Math.max(0, Math.min(100, bar))}%;background:${barColor}"></i></div>`;
-    const act = entity ? `data-act="info:${esc(entity)}"` : "";
-    return `<div class="v ${cls}" ${act}><div class="l">${esc(label)}</div><div class="n">${esc(value)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}${b}</div>`;
+    return `<div class="v ${cls}"><div class="l">${esc(label)}</div><div class="n">${esc(value)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}${b}</div>`;
   }
   _button(label, icon, act, on = false, extra = "") {
     return `<button class="b ${on ? "on" : ""} ${extra}" data-act="${esc(act)}"><ha-icon icon="${icon}"></ha-icon><span>${esc(label)}</span></button>`;
@@ -170,9 +169,6 @@ class CcBase extends HTMLElement {
     history.pushState(null, "", path);
     window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
   }
-  _moreInfo(entityId) {
-    this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId }, bubbles: true, composed: true }));
-  }
   _click(ev) {
     const el = ev.composedPath().find((n) => n.dataset && n.dataset.act);
     if (!el) return;
@@ -181,7 +177,6 @@ class CcBase extends HTMLElement {
     const h = this._hass;
     switch (kind) {
       case "nav": return this._navigate(arg);
-      case "info": return this._moreInfo(arg);
       case "toggle": return h.callService("homeassistant", "toggle", { entity_id: arg });
       case "press": return h.callService(domainOf(arg) === "input_button" ? "input_button" : "button", "press", { entity_id: arg });
       case "select": {
@@ -336,7 +331,8 @@ class CcOverview extends CcBase {
     if (p.humidity) r.push(this._readout("Humidity", this._fmt(p.humidity), { entity: p.humidity }));
     if (p.wind) {
       const dir = this._st(p.wind_dir)?.state;
-      r.push(this._readout("Wind", `${this._fmt(p.wind)}${dir && dir !== "unknown" ? " " + dir : ""}`, { sub: p.gust ? `Gust ${this._fmt(p.gust)}` : "", entity: p.wind }));
+      const sub = [dir && dir !== "unknown" ? dir : "", p.gust ? `Gust ${this._fmt(p.gust)}` : ""].filter(Boolean).join(" · ");
+      r.push(this._readout("Wind", this._fmt(p.wind), { sub, entity: p.wind }));
     }
     if (p.uv) {
       const n = this._num(p.uv);
@@ -520,7 +516,7 @@ class CcView extends CcBase {
     }
     if (d === "image" || d === "camera") {
       const pic = s.attributes.entity_picture;
-      return pic ? `<div class="wide" data-act="info:${esc(id)}"><img class="pic" src="${esc(pic)}" alt="${esc(name)}"></div>` : "";
+      return pic ? `<div class="wide"><img class="pic" src="${esc(pic)}" alt="${esc(name)}"></div>` : "";
     }
     if (d === "binary_sensor") {
       const on = this._on(id);
