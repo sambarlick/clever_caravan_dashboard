@@ -331,6 +331,11 @@ class CcOverview extends CcBase {
     </div>`;
   }
 
+  _watts(n) {
+    if (n === null || isNaN(n)) return "—";
+    return Math.abs(n) >= 1000 ? `${(n / 1000).toFixed(1)} kW` : `${Math.round(n)} W`;
+  }
+
   _tankColour(pct, inverse) {
     const p = inverse ? 100 - pct : pct;
     return p > 80 ? "#4ade80" : p > 60 ? "#a3e635" : p > 40 ? "#facc15" : p > 20 ? "#fb923c" : "#f87171";
@@ -344,6 +349,12 @@ class CcOverview extends CcBase {
       const ttg = this._st(p.ttg)?.state;
       r.push(this._readout("Battery", this._fmt(p.soc), { cls, sub: [flow, ttg && ttg !== "unknown" ? ttg : ""].filter(Boolean).join(" · "), entity: p.soc }));
     }
+    if (this._compact) {
+      const plugged = p.shore_connected ? this._on(p.shore_connected) : true;
+      const inW = (this._num(p.solar) || 0) + (plugged ? this._num(p.shore) || 0 : 0);
+      const outW = (this._num(p.dc) || 0) + (this._num(p.ac) || 0);
+      if (p.solar || p.shore || p.dc || p.ac) r.push(this._readout("In / Out", `${this._watts(inW)} / ${this._watts(outW)}`, { cls: "txt", sub: "Solar + shore · loads" }));
+    } else {
     if (p.solar) r.push(this._readout("Solar", this._fmt(p.solar), { entity: p.solar }));
     if (p.shore) {
       const plugged = p.shore_connected ? this._on(p.shore_connected) : true;
@@ -354,6 +365,7 @@ class CcOverview extends CcBase {
     (p.alts || []).forEach((a, i) => {
       if (this._on(a.charging)) r.push(this._readout(`DC-DC ${p.alts.length > 1 ? i + 1 : ""}`.trim(), this._fmt(a.power), { cls: "good", entity: a.power }));
     });
+    }
     const b = [];
     const inv = this._st(p.inverter);
     if (inv) {
@@ -369,6 +381,7 @@ class CcOverview extends CcBase {
   }
 
   _water(p) {
+    if (this._compact) return this._waterCompact(p);
     const r = (p.tanks || []).map((t) => {
       const n = this._num(t.level) ?? 0;
       const on = t.toggle ? this._on(t.toggle) : false;
@@ -381,6 +394,35 @@ class CcOverview extends CcBase {
         act: t.toggle ? `toggle:${t.toggle}` : "",
       });
     });
+    const b = (p.buttons || []).map((x) => this._button(x.label, x.icon, `toggle:${x.id}`, this._on(x.id)));
+    return this._panel("water", r, b);
+  }
+
+  _waterCompact(p) {
+    const tanks = p.tanks || [];
+    const fresh = tanks.filter((t) => !t.grey && !/drink/i.test(t.label));
+    const r = [];
+    if (fresh.length) {
+      const rows = fresh.map((t) => ({ pct: this._num(t.level), litres: t.remaining ? this._num(t.remaining) : null }));
+      const known = rows.filter((x) => x.pct !== null);
+      const withCap = known.filter((x) => x.litres !== null && x.pct > 0);
+      let pct = null;
+      if (withCap.length === known.length && withCap.length) {
+        const rem = withCap.reduce((a, x) => a + x.litres, 0);
+        const cap = withCap.reduce((a, x) => a + x.litres / (x.pct / 100), 0);
+        pct = cap > 0 ? (rem / cap) * 100 : null;
+      }
+      if (pct === null && known.length) pct = known.reduce((a, x) => a + x.pct, 0) / known.length;
+      const litres = rows.filter((x) => x.litres !== null).reduce((a, x) => a + x.litres, 0);
+      const hasLitres = rows.some((x) => x.litres !== null);
+      const sub = [`${fresh.length} tank${fresh.length > 1 ? "s" : ""}`, hasLitres ? `${litres.toFixed(1)} L` : ""].filter(Boolean).join(" · ");
+      r.push(this._readout("Fresh", pct === null ? "—" : `${Math.round(pct)}%`, { sub, bar: pct ?? 0, barColor: this._tankColour(pct ?? 0, false) }));
+    }
+    const grey = tanks.find((t) => t.grey);
+    if (grey) {
+      const n = this._num(grey.level) ?? 0;
+      r.push(this._readout("Grey", this._fmt(grey.level), { sub: grey.remaining ? this._fmt(grey.remaining) : "", bar: n, barColor: this._tankColour(n, true) }));
+    }
     const b = (p.buttons || []).map((x) => this._button(x.label, x.icon, `toggle:${x.id}`, this._on(x.id)));
     return this._panel("water", r, b);
   }
@@ -407,6 +449,14 @@ class CcOverview extends CcBase {
     if (p.forecast) r.push(this._readout("Today", this._fmt(p.forecast), { cls: "txt", entity: p.forecast }));
     const warn = this._num(p.warnings);
     if (warn) r.unshift(this._readout("Warnings", `${warn} active`, { cls: "bad", entity: p.warnings }));
+    if (this._compact) {
+      const keep = [];
+      if (p.outside) keep.push(this._readout("Outside", this._fmt(p.outside)));
+      if (p.inside) keep.push(this._readout("Inside", this._fmt(p.inside)));
+      else if (p.humidity) keep.push(this._readout("Humidity", this._fmt(p.humidity)));
+      r.length = 0;
+      r.push(...keep);
+    }
     const b = [];
     const ac = this._st(p.ac);
     if (ac) {
@@ -423,7 +473,12 @@ class CcOverview extends CcBase {
     const any = (outside) => L.filter((l) => !!l.outside === outside).some((l) => this._on(l.id));
     const allOff = this._button("All off", "mdi:lightbulb-off", "alloff");
     let b;
-    if (L.length + 1 <= cap) {
+    if (this._compact) {
+      const count = (outside) => L.filter((l) => !!l.outside === outside && this._on(l.id)).length;
+      b = [];
+      if (L.some((l) => !l.outside)) b.push(this._button(`Inside · ${count(false)} on`, "mdi:lamps", "group:inside", count(false) > 0));
+      if (L.some((l) => l.outside)) b.push(this._button(`Outside · ${count(true)} on`, "mdi:outdoor-lamp", "group:outside", count(true) > 0));
+    } else if (L.length + 1 <= cap) {
       b = [...L.map((l) => this._button(l.label, l.icon, `toggle:${l.id}`, this._on(l.id))), allOff];
     } else {
       b = [];
@@ -452,23 +507,34 @@ class CcOverview extends CcBase {
   }
 
   _status(p) {
-    const r = [];
-    if (p.caravan) r.push(this._readout("Caravan", this._fmt(p.caravan), { cls: "txt", entity: p.caravan }));
-    if (p.location) r.push(this._readout("Location", this._fmt(p.location), { cls: "txt", entity: p.location }));
-    if (p.gps) r.push(this._readout("GPS", this._on(p.gps) ? "OK" : "No fix", { cls: this._on(p.gps) ? "good" : "bad", entity: p.gps }));
-    if (p.internet) r.push(this._readout("Internet", this._on(p.internet) ? "Online" : "Offline", { cls: this._on(p.internet) ? "good" : "bad", entity: p.internet }));
+    const caravan = p.caravan ? this._readout("Caravan", this._fmt(p.caravan), { cls: "txt" }) : "";
+    const location = p.location
+      ? this._readout("Location", this._fmt(p.location), { cls: "txt", act: p.location_nav ? `nav:${p.location_nav}` : "" })
+      : "";
+    const gps = p.gps ? this._readout("GPS", this._on(p.gps) ? "OK" : "No fix", { cls: this._on(p.gps) ? "good" : "bad" }) : "";
+    const netOn = p.internet ? this._on(p.internet) : true;
+    const internet = p.internet ? this._readout("Internet", netOn ? "Online" : "Offline", { cls: netOn ? "good" : "bad" }) : "";
+    let fridge = "", fridgeBad = false;
     if (p.fridge || p.freezer) {
       const f = this._num(p.fridge), z = this._num(p.freezer);
-      const bad = (f !== null && (f > 5 || f < 0)) || (z !== null && z > -12);
-      r.push(this._readout("Fridge", [p.fridge ? `${f ?? "—"}°` : null, p.freezer ? `${z ?? "—"}°` : null].filter(Boolean).join(" / "), { cls: bad ? "bad" : "", entity: p.fridge || p.freezer }));
+      fridgeBad = (f !== null && (f > 5 || f < 0)) || (z !== null && z > -12);
+      fridge = this._readout("Fridge", [p.fridge ? `${f ?? "—"}°` : null, p.freezer ? `${z ?? "—"}°` : null].filter(Boolean).join(" / "), { cls: fridgeBad ? "bad" : "" });
     }
     const t = (p.tyres || []).length ? this._tyres(p) : null;
-    if (t && t.low !== null) r.push(this._readout("Lowest tyre", `${t.low.toFixed(1)} psi`, { cls: t.state, entity: t.lowId }));
+    const tyres = t && t.low !== null
+      ? this._readout("Lowest tyre", `${t.low.toFixed(1)} psi`, { cls: t.state, act: p.tyres_nav ? `nav:${p.tyres_nav}` : "" })
+      : "";
+
     const b = [];
-    if (p.location_nav) b.push(this._button("Location", "mdi:map-marker", `nav:${p.location_nav}`));
     if (p.security_nav) b.push(this._button("Security", "mdi:cctv", `nav:${p.security_nav}`));
     if (p.tyres_nav) b.push(this._button("Tyres", "mdi:car-tire-alert", `nav:${p.tyres_nav}`, false, t && t.state === "bad" ? "alert" : ""));
-    return this._panel("status", r, b);
+
+    if (this._compact) {
+      // Two tiles: Caravan + Location, unless an alert needs the space.
+      const alert = (t && t.state === "bad" && tyres) || (fridgeBad && fridge) || (!netOn && internet) || "";
+      return this._panel("status", [caravan, alert || location].filter(Boolean), b);
+    }
+    return this._panel("status", [caravan, location, gps, internet, fridge, tyres].filter(Boolean), b);
   }
 
   _top() {
@@ -494,6 +560,8 @@ class CcOverview extends CcBase {
   _render() {
     if (!this._hass || !this._config || !this.shadowRoot) return;
     const P = this._config.panels || {};
+    const w = this.clientWidth;
+    this._compact = w > 0 && w <= 600;
     const out = [];
     if (P.power) out.push(this._power(P.power));
     if (P.water) out.push(this._water(P.water));
