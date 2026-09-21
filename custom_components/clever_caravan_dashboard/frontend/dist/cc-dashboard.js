@@ -37,11 +37,12 @@ const PLATFORM_META = {
   clever_caravan_waymote: { title: "Waymote", path: "waymote", icon: "mdi:remote" },
 };
 
-// role -> unique_id suffix on clever_caravan_power ({portal}_{key}_{instance})
+// role -> vdef.key on clever_caravan_power. unique_id is {portal}_{key}_{instance};
+// instance varies per rig, so match any instance and take the lowest.
 const POWER_HEADLINE = [
-  { role: "battery_soc", suffix: "_battery_soc_system", name: "Battery" },
-  { role: "solar_power", suffix: "_pv_power_system", name: "Solar" },
-  { role: "shore_power", suffix: "_shore_power_system", name: "Shore Power" },
+  { role: "battery_soc", key: "battery_soc", name: "Battery" },
+  { role: "solar_power", key: "pv_power", name: "Solar" },
+  { role: "shore_power", key: "shore_power", name: "Shore Power" },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -75,6 +76,17 @@ function findConfigState(hass, registry) {
 function deviceName(hass, deviceId) {
   const d = deviceId && hass.devices ? hass.devices[deviceId] : undefined;
   return (d && (d.name_by_user || d.name)) || "Other";
+}
+
+/** Friendly name with the device name stripped off the front. */
+function shortName(hass, e, devName) {
+  const st = hass.states[e.entity_id];
+  const full = (st && st.attributes.friendly_name) || "";
+  if (devName && full.startsWith(devName + " ")) {
+    const rest = full.slice(devName.length + 1).trim();
+    if (rest) return rest;
+  }
+  return undefined;
 }
 
 /* ------------------------------------------------------------------ */
@@ -119,15 +131,18 @@ function deviceSections(hass, entries) {
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(({ name, list }) => ({
       type: "grid",
-      cards: [heading(name), ...list.map((e) => cardFor(e.entity_id))],
+      cards: [heading(name), ...list.map((e) => cardFor(e.entity_id, shortName(hass, e, name)))],
     }));
 }
 
 function powerHeadline(entries, roleMap) {
   const used = new Set();
-  const cards = POWER_HEADLINE.map(({ role, suffix, name }) => {
+  const cards = POWER_HEADLINE.map(({ role, key, name }) => {
     if (roleMap[role]) return cardFor(roleMap[role], name);
-    const hit = entries.find((e) => (e.unique_id || "").endsWith(suffix));
+    const re = new RegExp(`^[0-9a-f]+_${key}_([^_]+)$`);
+    const hit = entries
+      .filter((e) => re.test(e.unique_id || ""))
+      .sort((a, b) => a.unique_id.localeCompare(b.unique_id, undefined, { numeric: true }))[0];
     if (!hit) return placeholder(name);
     used.add(hit.entity_id);
     return cardFor(hit.entity_id, name);
