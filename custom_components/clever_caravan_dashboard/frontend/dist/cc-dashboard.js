@@ -54,6 +54,8 @@ ha-icon{display:inline-flex}
 .v .s{font-size:14px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .v{container-type:inline-size}
 .v.txt .n{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.v.tap{cursor:pointer;border:2px solid transparent;transition:all .2s}.v.tap:active{transform:scale(.97)}
+.v.sel{border-color:var(--c);background:rgba(var(--rgb),.18);box-shadow:0 0 16px rgba(var(--rgb),.45)}.v.sel .l,.v.sel .s{color:var(--c)}
 .v.good .n{color:#48bb78}.v.warn .n{color:#ed8936}.v.bad .n{color:#fc8181}.v.dim{opacity:.45}
 .bar{height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;border-radius:4px}
 .b{min-height:56px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#cbd5e0;
@@ -157,9 +159,9 @@ class CcBase extends HTMLElement {
     for (const re of strip) n = n.replace(re, "");
     return n.trim() || this._st(id)?.attributes.friendly_name || id;
   }
-  _readout(label, value, { cls = "", sub = "", bar = null, barColor = "", entity = "" } = {}) {
+  _readout(label, value, { cls = "", sub = "", bar = null, barColor = "", act = "" } = {}) {
     const b = bar === null ? "" : `<div class="bar"><i style="width:${Math.max(0, Math.min(100, bar))}%;background:${barColor}"></i></div>`;
-    return `<div class="v ${cls}"><div class="l">${esc(label)}</div><div class="n">${esc(value)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}${b}</div>`;
+    return `<div class="v ${cls}${act ? " tap" : ""}"${act ? ` data-act="${esc(act)}"` : ""}><div class="l">${esc(label)}</div><div class="n">${esc(value)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}${b}</div>`;
   }
   _button(label, icon, act, on = false, extra = "") {
     return `<button class="b ${on ? "on" : ""} ${extra}" data-act="${esc(act)}"><ha-icon icon="${icon}"></ha-icon><span>${esc(label)}</span></button>`;
@@ -318,7 +320,15 @@ class CcOverview extends CcBase {
   _water(p) {
     const r = (p.tanks || []).map((t) => {
       const n = this._num(t.level) ?? 0;
-      return this._readout(t.label, this._fmt(t.level), { sub: t.remaining ? this._fmt(t.remaining) : "", bar: n, barColor: this._tankColour(n, t.grey), entity: t.level });
+      const on = t.toggle ? this._on(t.toggle) : false;
+      const sub = [t.remaining ? this._fmt(t.remaining) : "", on ? "Selected" : ""].filter(Boolean).join(" · ");
+      return this._readout(t.label, this._fmt(t.level), {
+        cls: on ? "sel" : "",
+        sub,
+        bar: n,
+        barColor: this._tankColour(n, t.grey),
+        act: t.toggle ? `toggle:${t.toggle}` : "",
+      });
     });
     const b = (p.buttons || []).map((x) => this._button(x.label, x.icon, `toggle:${x.id}`, this._on(x.id)));
     return this._panel("water", r, b);
@@ -631,6 +641,37 @@ function areaName(hass, e) {
   return (areaId && hass.areas?.[areaId]?.name) || "";
 }
 
+// Tank key: whatever follows "tank" (not "tanks") — a number or a word.
+const TANK_KEY_IGNORE = /^(level|remaining|capacity|volume|valve|select|pump|sensor|supply)$/;
+function tankKey(hass, e) {
+  const sources = [e.entity_id.split(".")[1], friendly(hass, e.entity_id).toLowerCase()];
+  for (const src of sources) {
+    const re = /tank(?!s)[\s_]*(\d+|[a-z]+)/g;
+    let m;
+    while ((m = re.exec(src))) {
+      let k = m[1];
+      if (TANK_KEY_IGNORE.test(k)) continue;
+      if (k === "gray") k = "grey";
+      if (k.startsWith("drink")) k = "drink";
+      return k;
+    }
+  }
+  return null;
+}
+
+function tankLabel(key) {
+  if (!key) return "";
+  return /^\d+$/.test(key) ? `Tank ${key}` : key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+function cleanName(hass, e) {
+  const dev = deviceName(hass, e.device_id);
+  let n = friendly(hass, e.entity_id);
+  if (dev && n.startsWith(dev)) n = n.slice(dev.length);
+  n = n.replace(/^waymote( can bus)?\s*/i, "").trim();
+  return n || friendly(hass, e.entity_id);
+}
+
 function friendly(hass, id) {
   return hass.states[id]?.attributes.friendly_name || id;
 }
@@ -683,6 +724,7 @@ function buildOverview(hass, cats, all, nav) {
 
   const water = cats.get("water") || [];
   if (water.length) {
+    // Tanks from Clever Caravan Power (Cerbo tank instances)
     const levels = powerKey(all, "tank_level");
     const remaining = powerKey(all, "tank_remaining");
     let pos = 0;
@@ -691,25 +733,38 @@ function buildOverview(hass, cats, all, nav) {
       const grey = /grey|gray|waste/.test(name);
       const num = (name.match(/(\d+)/) || [])[1];
       if (!grey) pos += 1;
-      return { level: e.entity_id, remaining: remaining.find((r) => r.inst === inst)?.e.entity_id, grey, label: grey ? "Grey" : `Fresh ${num || pos}`, sort: grey ? 999 : Number(num || pos) };
-    }).sort((a, b) => a.sort - b.sort).map(({ sort, ...t }) => t);
-    // Extra-integration tanks (percent sensors not from Clever Caravan Power)
+      const n = num || String(pos);
+      return { key: grey ? "grey" : n, level: e.entity_id, remaining: remaining.find((r) => r.inst === inst)?.e.entity_id, grey, label: grey ? "Grey" : `Fresh ${n}`, sort: grey ? 999 : Number(n) };
+    });
+    // Tanks from other integrations (percent sensors)
     for (const e of byDomain(water, "sensor").filter((x) => x.platform !== P_POWER && hass.states[x.entity_id].attributes.unit_of_measurement === "%")) {
-      tanks.push({ level: e.entity_id, grey: /grey|gray|waste/.test(textOf(hass, e)), label: friendly(hass, e.entity_id) });
+      const key = tankKey(hass, e);
+      const grey = key === "grey" || /grey|gray|waste/.test(textOf(hass, e));
+      tanks.push({ key, level: e.entity_id, grey, label: tankLabel(key) || friendly(hass, e.entity_id), sort: /^\d+$/.test(key || "") ? Number(key) : grey ? 999 : 500 });
     }
-    const switches = byDomain(water, "switch", "input_boolean");
+    tanks.sort((a, b) => a.sort - b.sort);
+
+    // Switches: pair with a tank on matching key, otherwise keep as a button
     const buttons = [];
-    for (const e of switches) {
+    for (const e of byDomain(water, "switch", "input_boolean")) {
       const t = textOf(hass, e);
-      if (/pump/.test(t)) buttons.unshift({ id: e.entity_id, label: "Pump", icon: "mdi:water-pump" });
-      else if (/tank/.test(t)) {
-        const ext = /external/.test(t);
-        const num = (t.match(/tank[_\s]*(\d+)/) || [])[1];
-        buttons.push({ id: e.entity_id, label: ext ? "External" : `Tank ${num || ""}`.trim(), icon: ext ? "mdi:water-plus" : "mdi:swap-horizontal", sort: ext ? 99 : Number(num || 50) });
-      } else if (/dump/.test(t)) buttons.push({ id: e.entity_id, label: "Grey dump", icon: "mdi:water-off", sort: 100 });
+      const key = /tank/.test(t) ? tankKey(hass, e) : null;
+      const tank = key && tanks.find((x) => x.key === key && !x.toggle);
+      if (tank) {
+        tank.toggle = e.entity_id;
+        continue;
+      }
+      if (/pump/.test(t)) buttons.push({ id: e.entity_id, label: cleanName(hass, e), icon: "mdi:water-pump", sort: 0 });
+      else if (/dump/.test(t)) buttons.push({ id: e.entity_id, label: cleanName(hass, e), icon: "mdi:water-off", sort: 100 });
+      else if (key) buttons.push({ id: e.entity_id, label: tankLabel(key), icon: key === "external" ? "mdi:water-plus" : "mdi:swap-horizontal", sort: 50 });
+      else buttons.push({ id: e.entity_id, label: cleanName(hass, e), icon: "mdi:toggle-switch", sort: 60 });
     }
-    buttons.sort((a, b) => (a.sort ?? -1) - (b.sort ?? -1));
-    panels.water = { nav: nav("water"), tanks, buttons: buttons.map(({ sort, ...b }) => b) };
+    buttons.sort((a, b) => a.sort - b.sort);
+    panels.water = {
+      nav: nav("water"),
+      tanks: tanks.map(({ sort, key, ...t }) => t),
+      buttons: buttons.map(({ sort, ...b }) => b),
+    };
   }
 
   const wx = all.filter((e) => e.platform === P_WX);
