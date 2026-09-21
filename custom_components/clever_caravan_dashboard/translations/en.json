@@ -2,23 +2,24 @@
   "config": {
     "step": {
       "user": {
-        "title": "Clever Caravan Dashboard",
-        "description": "Sets up the Clever Caravan dashboard engine. After this, add the dashboard once under Settings \u2192 Dashboards \u2192 Add dashboard \u2192 Community dashboards \u2192 Clever Caravan."
+        "title": "Clever Caravan: Dashboard",
+        "description": "Adds the Clever Caravan dashboard. Create it from Settings > Dashboards > Add dashboard > Clever Caravan."
       }
     },
     "abort": {
-      "already_configured": "Clever Caravan Dashboard is already set up."
+      "already_configured": "Clever Caravan: Dashboard is already set up."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Clever Caravan Dashboard",
-        "description": "Set the product tier and link any entities the dashboard can't resolve automatically.",
+        "title": "Dashboard settings",
         "data": {
           "tier": "Product tier",
-          "mains_power": "Mains power entity",
-          "vehicle_battery": "Vehicle battery entity"
+          "extra_platforms": "Extra integrations to include"
+        },
+        "data_description": {
+          "extra_platforms": "Clever Caravan integrations are always included. Tick any other installed integrations whose devices should appear on the dashboard."
         }
       }
     }

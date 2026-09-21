@@ -19,10 +19,11 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_EXTRA_PLATFORMS,
     CONF_ROLE_MAP,
     CONF_TIER,
     DOMAIN,
-    FOREIGN_ROLES,
+    OWNED_PLATFORMS,
     TIER_BASE,
     TIERS,
 )
@@ -41,71 +42,75 @@ class CleverCaravanDashboardConfigFlow(ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
 
         if user_input is not None:
-            return self.async_create_entry(
-                title="Clever Caravan Dashboard", data={}
-            )
+            return self.async_create_entry(title="Clever Caravan: Dashboard", data={})
 
         return self.async_show_form(step_id="user")
 
     @staticmethod
     @callback
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> OptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Return the options flow."""
         return CleverCaravanDashboardOptionsFlow()
 
 
 class CleverCaravanDashboardOptionsFlow(OptionsFlow):
-    """Tier selection + manual linking of foreign entities.
+    """Installer settings: tier + extra integrations to include."""
 
-    Note: no __init__ / self.config_entry assignment. The framework provides
-    self.config_entry; setting it manually is deprecated in current HA.
-    """
+    def _integration_options(self) -> list[selector.SelectOptionDict]:
+        """Installed integrations the installer can add to the dashboard."""
+        skip = {DOMAIN, *OWNED_PLATFORMS}
+        titles: dict[str, str] = {}
+        for entry in self.hass.config_entries.async_entries():
+            if entry.domain in skip:
+                continue
+            titles.setdefault(entry.domain, entry.title or entry.domain)
+        return [
+            selector.SelectOptionDict(value=domain, label=f"{title} ({domain})")
+            for domain, title in sorted(titles.items(), key=lambda kv: kv[1].lower())
+        ]
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
         options = dict(self.config_entry.options)
-        role_map: dict[str, str] = dict(options.get(CONF_ROLE_MAP, {}))
 
         if user_input is not None:
-            new_role_map = {
-                role: user_input[role]
-                for role in FOREIGN_ROLES
-                if user_input.get(role)
-            }
             return self.async_create_entry(
                 data={
                     CONF_TIER: user_input[CONF_TIER],
-                    CONF_ROLE_MAP: new_role_map,
+                    CONF_EXTRA_PLATFORMS: user_input.get(CONF_EXTRA_PLATFORMS, []),
+                    CONF_ROLE_MAP: options.get(CONF_ROLE_MAP, {}),
                 },
             )
 
-        schema_dict: dict[Any, Any] = {
-            vol.Required(
-                CONF_TIER, default=options.get(CONF_TIER, TIER_BASE)
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=TIERS,
-                    translation_key="tier",
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            ),
-        }
+        available = self._integration_options()
+        valid = {opt["value"] for opt in available}
+        # Drop previously-selected integrations that are no longer installed,
+        # otherwise the form fails validation.
+        current = [d for d in options.get(CONF_EXTRA_PLATFORMS, []) if d in valid]
 
-        for role in FOREIGN_ROLES:
-            existing = role_map.get(role)
-            marker = (
-                vol.Optional(role, description={"suggested_value": existing})
-                if existing
-                else vol.Optional(role)
-            )
-            schema_dict[marker] = selector.EntitySelector(
-                selector.EntitySelectorConfig()
-            )
-
-        return self.async_show_form(
-            step_id="init", data_schema=vol.Schema(schema_dict)
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_TIER, default=options.get(CONF_TIER, TIER_BASE)
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=TIERS,
+                        translation_key="tier",
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_EXTRA_PLATFORMS, default=current
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=available,
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+            }
         )
+
+        return self.async_show_form(step_id="init", data_schema=schema)

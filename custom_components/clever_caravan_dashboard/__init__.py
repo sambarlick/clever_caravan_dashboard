@@ -31,26 +31,30 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_call_later
+from homeassistant.loader import async_get_integration
 
-from .const import DOMAIN, JS_FILENAME, URL_BASE, VERSION
+from .const import DOMAIN, JS_FILENAME, URL_BASE
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 _RESOURCE_URL = f"{URL_BASE}/{JS_FILENAME}"
-_RESOURCE_FULL = f"{_RESOURCE_URL}?v={VERSION}"
 
 # Process-global guards (survive config-entry reloads).
 _STATIC_KEY = f"{DOMAIN}_static_registered"
 _RESOURCE_KEY = f"{DOMAIN}_resource_registered"
 _RETRY_KEY = f"{DOMAIN}_resource_retries"
+_VERSION_KEY = f"{DOMAIN}_version"
 _RETRY_DELAY = 5
 _MAX_RETRIES = 24  # ~2 min of headroom while Lovelace warms up
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Clever Caravan Dashboard from a config entry."""
+    if _VERSION_KEY not in hass.data:
+        integration = await async_get_integration(hass, DOMAIN)
+        hass.data[_VERSION_KEY] = str(integration.version)
     await _async_register_static(hass)
     await _async_register_resource(hass)
 
@@ -86,10 +90,16 @@ async def _async_register_static(hass: HomeAssistant) -> None:
     _LOGGER.debug("Serving Clever Caravan dashboard module at %s", _RESOURCE_URL)
 
 
+def _resource_full(hass: HomeAssistant) -> str:
+    """Resource URL with the manifest version as cache-buster."""
+    return f"{_RESOURCE_URL}?v={hass.data.get(_VERSION_KEY, '0')}"
+
+
 async def _async_register_resource(hass: HomeAssistant, _now=None) -> None:
     """Register the module as a Lovelace resource (storage mode, idempotent)."""
     if hass.data.get(_RESOURCE_KEY):
         return
+    _RESOURCE_FULL = _resource_full(hass)
 
     lovelace = hass.data.get("lovelace")
     if lovelace is None:
@@ -158,6 +168,7 @@ async def _async_register_resource(hass: HomeAssistant, _now=None) -> None:
 
 def _schedule_retry(hass: HomeAssistant) -> None:
     """Retry resource registration once Lovelace has warmed up (bounded)."""
+    _RESOURCE_FULL = _resource_full(hass)
     tries = hass.data.get(_RETRY_KEY, 0)
     if tries >= _MAX_RETRIES:
         _LOGGER.error(

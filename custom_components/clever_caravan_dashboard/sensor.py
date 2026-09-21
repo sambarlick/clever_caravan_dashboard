@@ -21,7 +21,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_ROLE_MAP, CONF_TIER, DOMAIN, OWNED_PLATFORMS, TIER_BASE
+from .const import (
+    CONF_EXTRA_PLATFORMS,
+    CONF_ROLE_MAP,
+    CONF_TIER,
+    DOMAIN,
+    OWNED_PLATFORMS,
+    TIER_BASE,
+)
 
 
 async def async_setup_entry(
@@ -65,4 +72,5 @@ class CleverCaravanConfigSensor(SensorEntity):
             "tier": self._entry.options.get(CONF_TIER, TIER_BASE),
             "role_map": self._entry.options.get(CONF_ROLE_MAP, {}),
             "owned_platforms": OWNED_PLATFORMS,
+            "extra_platforms": self._entry.options.get(CONF_EXTRA_PLATFORMS, []),
         }
