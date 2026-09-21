@@ -52,7 +52,8 @@ ha-icon{display:inline-flex}
 .v .l{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .v .n{font-weight:700;line-height:1.15;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .v .s{font-size:14px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.v.txt .n{white-space:normal}
+.v{container-type:inline-size}
+.v.txt .n{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .v.good .n{color:#48bb78}.v.warn .n{color:#ed8936}.v.bad .n{color:#fc8181}.v.dim{opacity:.45}
 .bar{height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;border-radius:4px}
 .b{min-height:56px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#cbd5e0;
@@ -75,6 +76,35 @@ function collectIds(obj, out = []) {
   } else if (Array.isArray(obj)) obj.forEach((x) => collectIds(x, out));
   else if (obj && typeof obj === "object") Object.values(obj).forEach((x) => collectIds(x, out));
   return out;
+}
+
+function morph(from, to) {
+  if (from.nodeType !== to.nodeType || from.nodeName !== to.nodeName) {
+    from.replaceWith(to.cloneNode(true));
+    return;
+  }
+  if (from.nodeType === 3) {
+    if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue;
+    return;
+  }
+  if (from.nodeType !== 1) return;
+  for (const a of [...from.attributes]) if (!to.hasAttribute(a.name)) from.removeAttribute(a.name);
+  for (const a of [...to.attributes]) if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+  patchChildren(from, to);
+}
+
+function patchChildren(parent, next) {
+  const cur = [...parent.childNodes];
+  const want = [...next.childNodes];
+  want.forEach((n, i) => (i < cur.length ? morph(cur[i], n) : parent.appendChild(n.cloneNode(true))));
+  for (let i = want.length; i < cur.length; i++) cur[i].remove();
+}
+
+// Update el's contents in place so unchanged nodes (icons, tiles) are never rebuilt.
+function patchHtml(el, html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  patchChildren(el, tpl.content);
 }
 
 const DECIMALS = { "%": 0, W: 0, V: 1, A: 1, "°C": 1, "°F": 1, "km/h": 0, psi: 1, kWh: 1, L: 1, m: 0, Ah: 1 };
@@ -218,12 +248,12 @@ const OV_CSS = `
 .ph .t{font-size:clamp(16px,5cqh,22px);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--c)}
 .ph .go{margin-left:auto;color:var(--mute);--mdc-icon-size:28px}
 .rd{flex:1;display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));grid-auto-rows:minmax(0,1fr);min-height:0}
-.v .n{font-size:clamp(20px,7cqh,44px)}
-.v.txt .n{font-size:clamp(16px,4.5cqh,26px)}
+.v .n{font-size:clamp(18px,min(7cqh,19cqi),44px)}
+.v.txt .n{font-size:clamp(16px,min(4.5cqh,13cqi),28px)}
 .bt{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(84px,100%),1fr));flex:none}
 .bt .b{min-height:clamp(56px,14cqh,84px)}
 .bt .b ha-icon{--mdc-icon-size:clamp(22px,7cqh,32px)}
-.bt.fill{flex:1;grid-auto-rows:minmax(56px,1fr)}
+.bt.fill{flex:1;grid-auto-rows:minmax(56px,130px);align-content:center}
 .phone-only{display:none}
 @container host (max-width:1000px) and (min-width:601px){.grid{--cols:2}.chip.opt{display:none}}
 @container host (max-width:600px){:host{padding:8px}.grid{--cols:2;gap:8px}.wrap{gap:8px}.chip.opt,.chip.person{display:none}
@@ -313,7 +343,7 @@ class CcOverview extends CcBase {
     }
     if (p.fire) {
       const f = this._st(p.fire)?.state || "";
-      r.push(this._readout("Fire danger", f || "—", { cls: /extreme|catastrophic|high/i.test(f) ? "bad" : /moderate/i.test(f) ? "warn" : "", entity: p.fire }));
+      r.push(this._readout("Fire danger", f || "—", { cls: `txt ${/extreme|catastrophic|high/i.test(f) ? "bad" : /moderate/i.test(f) ? "warn" : ""}`, entity: p.fire }));
     }
     if (p.forecast) r.push(this._readout("Today", this._fmt(p.forecast), { cls: "txt", entity: p.forecast }));
     const warn = this._num(p.warnings);
@@ -357,7 +387,7 @@ class CcOverview extends CcBase {
 
   _status(p) {
     const r = [];
-    if (p.caravan) r.push(this._readout("Caravan", this._fmt(p.caravan), { entity: p.caravan }));
+    if (p.caravan) r.push(this._readout("Caravan", this._fmt(p.caravan), { cls: "txt", entity: p.caravan }));
     if (p.location) r.push(this._readout("Location", this._fmt(p.location), { cls: "txt", entity: p.location }));
     if (p.gps) r.push(this._readout("GPS", this._on(p.gps) ? "OK" : "No fix", { cls: this._on(p.gps) ? "good" : "bad", entity: p.gps }));
     if (p.internet) r.push(this._readout("Internet", this._on(p.internet) ? "Online" : "Offline", { cls: this._on(p.internet) ? "good" : "bad", entity: p.internet }));
@@ -405,7 +435,11 @@ class CcOverview extends CcBase {
     if (P.lights) out.push(this._lights(P.lights));
     if (P.controls) out.push(this._controls(P.controls));
     if (P.status) out.push(this._status(P.status));
-    this.shadowRoot.innerHTML = `<style>${BASE_CSS}${OV_CSS}</style><div class="wrap">${this._top()}<div class="grid">${out.join("")}</div></div>`;
+    if (!this._root) {
+      this.shadowRoot.innerHTML = `<style>${BASE_CSS}${OV_CSS}</style><div class="wrap"></div>`;
+      this._root = this.shadowRoot.querySelector(".wrap");
+    }
+    patchHtml(this._root, `${this._top()}<div class="grid">${out.join("")}</div>`);
   }
 }
 
@@ -513,10 +547,10 @@ class CcView extends CcBase {
       this._ensureMap();
     }
     const strip = (c.strip || []).map((s) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"));
-    this.shadowRoot.getElementById("body").innerHTML = `<div class="groups">${(c.groups || [])
+    patchHtml(this.shadowRoot.getElementById("body"), `<div class="groups">${(c.groups || [])
       .map((g) => `<div class="g"><h3>${esc(g.title)}</h3><div class="items">${g.items
         .map((id) => this._item(id, [new RegExp(`^${g.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), ...strip])).join("")}</div></div>`)
-      .join("")}</div>`;
+      .join("")}</div>`);
   }
 }
 
