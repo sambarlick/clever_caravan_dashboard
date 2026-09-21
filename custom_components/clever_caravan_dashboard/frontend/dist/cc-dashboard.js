@@ -245,25 +245,57 @@ const OV_CSS = `
 .p.alarm .ph .ic{background:rgba(252,129,129,.3)}.p.alarm .ph .ic ha-icon{color:#fc8181}
 .ph .t{font-size:clamp(16px,5cqh,22px);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--c)}
 .ph .go{margin-left:auto;color:var(--mute);--mdc-icon-size:28px}
-.rd{flex:1;display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));grid-auto-rows:minmax(0,1fr);min-height:0}
+.rd{flex:1;display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));grid-auto-rows:minmax(64px,1fr)}
 .v .n{font-size:clamp(20px,min(9cqh,25cqi),52px)}
 .v.txt .n{font-size:clamp(16px,min(6cqh,15cqi),30px)}
 .bt{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(84px,100%),1fr));flex:none}
 .bt .b{min-height:clamp(56px,14cqh,84px)}
 .bt .b ha-icon{--mdc-icon-size:clamp(22px,7cqh,32px)}
-.bt.fill{flex:1;grid-auto-rows:minmax(56px,130px);align-content:center}
-.phone-only{display:none}
-@container host (max-width:1000px) and (min-width:601px){.grid{--cols:2}.chip.opt{display:none}}
+.bt.fill{flex:1;min-height:0;grid-auto-rows:minmax(56px,130px);align-content:safe center}
+@container host (max-width:1000px) and (min-width:601px){.grid{--cols:2}.chip.opt,.chip.person{display:none}}
 @container host (max-width:600px){:host{padding:8px}.grid{--cols:2;gap:8px}.wrap{gap:8px}.chip.opt,.chip.person{display:none}
- .p{padding:10px;gap:8px}.rd .v:nth-child(n+3){display:none}.bt .b:nth-child(n+3){display:none}.wide-only{display:none!important}.phone-only{display:flex}
+ .p{padding:10px;gap:8px}.rd{grid-auto-rows:minmax(52px,1fr)}.rd .v:nth-child(n+3){display:none}
  .ph .t{font-size:15px;letter-spacing:.04em}.ph .ic{width:32px;height:32px}.ph .go{--mdc-icon-size:22px}}
 @container host (max-width:380px){.hello{font-size:16px}}
 `;
 
 class CcOverview extends CcBase {
   getCardSize() { return 12; }
-  connectedCallback() { this._timer = setInterval(() => this._render(), 30000); }
-  disconnectedCallback() { clearInterval(this._timer); }
+  connectedCallback() {
+    this._caps = {};
+    this._sigs = {};
+    this._timer = setInterval(() => this._render(), 30000);
+    if (window.ResizeObserver && !this._ro) {
+      this._ro = new ResizeObserver(() => {
+        cancelAnimationFrame(this._roFrame);
+        this._roFrame = requestAnimationFrame(() => { this._caps = {}; this._render(); });
+      });
+    }
+    this._ro?.observe(this);
+  }
+  disconnectedCallback() {
+    clearInterval(this._timer);
+    this._ro?.disconnect();
+  }
+
+  // Measure-and-fit: shrink each panel's button count until nothing overflows.
+  _fit() {
+    if (!this._root) return;
+    let changed = false;
+    for (const p of this._root.querySelectorAll(".p[data-key]")) {
+      const key = p.dataset.key;
+      const total = Number(p.dataset.buttons) || 0;
+      if (!total) continue;
+      if (p.scrollHeight > p.clientHeight + 1) {
+        const cur = Math.min(this._caps[key] ?? total, total);
+        if (cur > 0) {
+          this._caps[key] = cur - 1;
+          changed = true;
+        }
+      }
+    }
+    if (changed) this._render();
+  }
 
   _groupIds(which) {
     const L = this._config.panels?.lights?.lights || [];
@@ -271,9 +303,28 @@ class CcOverview extends CcBase {
   }
 
   _panel(key, readouts, buttons, { alarm = false, fillButtons = false } = {}) {
+    if (!readouts.length && !buttons.length) return "";
     const s = CATS[key];
     const nav = this._config.panels[key]?.nav || "";
-    return `<div class="p ${alarm ? "alarm" : ""}" style="--c:${s.c};--rgb:${s.rgb}">
+    // Reset the fitted cap whenever the panel's content count changes.
+    this._caps = this._caps || {};
+    this._sigs = this._sigs || {};
+    const sig = `${readouts.length}:${buttons.length}`;
+    if (this._sigs[key] !== sig) {
+      this._sigs[key] = sig;
+      delete this._caps[key];
+    }
+    const cap = this._caps[key] ?? Infinity;
+    const total = buttons.length;
+    if (total > cap) {
+      if (nav && cap >= 1) {
+        const keep = cap - 1;
+        buttons = [...buttons.slice(0, keep), this._button(`+${total - keep} more`, "mdi:dots-horizontal", `nav:${nav}`)];
+      } else {
+        buttons = buttons.slice(0, Math.max(0, cap));
+      }
+    }
+    return `<div class="p ${alarm ? "alarm" : ""}" data-key="${key}" data-buttons="${total}" style="--c:${s.c};--rgb:${s.rgb}">
       <div class="ph" data-act="nav:${esc(nav)}"><div class="ic"><ha-icon icon="${s.icon}"></ha-icon></div><div class="t">${s.title}</div>${nav ? '<ha-icon class="go" icon="mdi:chevron-right"></ha-icon>' : ""}</div>
       ${readouts.length ? `<div class="rd">${readouts.join("")}</div>` : ""}
       ${buttons.length ? `<div class="bt ${fillButtons || !readouts.length ? "fill" : ""}">${buttons.join("")}</div>` : ""}
@@ -368,11 +419,18 @@ class CcOverview extends CcBase {
 
   _lights(p) {
     const L = p.lights || [];
-    const b = L.slice(0, 8).map((l) => this._button(l.label, l.icon, `toggle:${l.id}`, this._on(l.id), "wide-only"));
+    const cap = (this._caps || {}).lights ?? Infinity;
     const any = (outside) => L.filter((l) => !!l.outside === outside).some((l) => this._on(l.id));
-    if (L.some((l) => !l.outside)) b.push(this._button("Inside", "mdi:lamps", "group:inside", any(false), "phone-only"));
-    if (L.some((l) => l.outside)) b.push(this._button("Outside", "mdi:outdoor-lamp", "group:outside", any(true), "phone-only"));
-    b.push(this._button("All off", "mdi:lightbulb-off", "alloff"));
+    const allOff = this._button("All off", "mdi:lightbulb-off", "alloff");
+    let b;
+    if (L.length + 1 <= cap) {
+      b = [...L.map((l) => this._button(l.label, l.icon, `toggle:${l.id}`, this._on(l.id))), allOff];
+    } else {
+      b = [];
+      if (L.some((l) => !l.outside)) b.push(this._button("Inside", "mdi:lamps", "group:inside", any(false)));
+      if (L.some((l) => l.outside)) b.push(this._button("Outside", "mdi:outdoor-lamp", "group:outside", any(true)));
+      b.push(allOff);
+    }
     return this._panel("lights", [], b, { fillButtons: true });
   }
 
@@ -447,7 +505,9 @@ class CcOverview extends CcBase {
       this.shadowRoot.innerHTML = `<style>${BASE_CSS}${OV_CSS}</style><div class="wrap"></div>`;
       this._root = this.shadowRoot.querySelector(".wrap");
     }
-    patchHtml(this._root, `${this._top()}<div class="grid">${out.join("")}</div>`);
+    patchHtml(this._root, `${this._top()}<div class="grid">${out.filter(Boolean).join("")}</div>`);
+    cancelAnimationFrame(this._fitFrame);
+    this._fitFrame = requestAnimationFrame(() => this._fit());
   }
 }
 
