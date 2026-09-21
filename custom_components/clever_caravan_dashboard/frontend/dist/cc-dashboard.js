@@ -45,7 +45,7 @@ const TOGGLE_DOMAINS = new Set(["switch", "input_boolean", "light", "fan", "scri
  * ===================================================================== */
 
 const BASE_CSS = `
-:host{--bg:#111118;--panel:#1b1f2b;--ink:#f0f0f5;--mute:#a0aec0;display:block;color:var(--ink);font-family:var(--ha-font-family-body,Roboto,sans-serif);background:var(--bg)}
+:host{box-sizing:border-box;--bg:#111118;--panel:#1b1f2b;--ink:#f0f0f5;--mute:#a0aec0;display:block;color:var(--ink);font-family:var(--ha-font-family-body,Roboto,sans-serif);background:var(--bg)}
 *{box-sizing:border-box}
 ha-icon{display:inline-flex}
 .v{background:rgba(255,255,255,.04);border-radius:12px;padding:8px 12px;min-width:0;display:flex;flex-direction:column;justify-content:center;cursor:pointer}
@@ -146,8 +146,9 @@ class CcBase extends HTMLElement {
       const d = u in DECIMALS ? DECIMALS[u] : Number.isInteger(n) ? 0 : 2;
       v = n.toFixed(d);
     }
+    if (!isNaN(n) && /^-?[\d.]+(e-?\d+)?$/.test(s.state)) return u ? `${v}${u === "%" ? "" : " "}${u}` : v;
     try {
-      if (this._hass.formatEntityState) return this._hass.formatEntityState(s, v);
+      if (this._hass.formatEntityState) return this._hass.formatEntityState(s);
     } catch (e) { /* fall through */ }
     return u ? `${v} ${u}` : v;
   }
@@ -248,8 +249,8 @@ const OV_CSS = `
 .ph .t{font-size:clamp(16px,5cqh,22px);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--c)}
 .ph .go{margin-left:auto;color:var(--mute);--mdc-icon-size:28px}
 .rd{flex:1;display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));grid-auto-rows:minmax(0,1fr);min-height:0}
-.v .n{font-size:clamp(18px,min(7cqh,19cqi),44px)}
-.v.txt .n{font-size:clamp(16px,min(4.5cqh,13cqi),28px)}
+.v .n{font-size:clamp(20px,min(9cqh,25cqi),52px)}
+.v.txt .n{font-size:clamp(16px,min(6cqh,15cqi),30px)}
 .bt{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(min(84px,100%),1fr));flex:none}
 .bt .b{min-height:clamp(56px,14cqh,84px)}
 .bt .b ha-icon{--mdc-icon-size:clamp(22px,7cqh,32px)}
@@ -341,8 +342,9 @@ class CcOverview extends CcBase {
       const n = this._num(p.uv);
       r.push(this._readout("UV today", this._fmt(p.uv), { cls: n === null ? "" : n >= 8 ? "bad" : n >= 3 ? "warn" : "good", sub: this._st(p.uv_cat)?.state || "", entity: p.uv }));
     }
-    if (p.fire) {
-      const f = this._st(p.fire)?.state || "";
+    const fireState = this._st(p.fire)?.state;
+    if (p.fire && fireState && !/^(unknown|unavailable)$/.test(fireState)) {
+      const f = fireState;
       r.push(this._readout("Fire danger", f || "—", { cls: `txt ${/extreme|catastrophic|high/i.test(f) ? "bad" : /moderate/i.test(f) ? "warn" : ""}`, entity: p.fire }));
     }
     if (p.forecast) r.push(this._readout("Today", this._fmt(p.forecast), { cls: "txt", entity: p.forecast }));
