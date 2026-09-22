@@ -345,20 +345,29 @@ class CcOverview extends CcBase {
     const r = [];
     if (p.soc) {
       const flow = this._st(p.flow)?.state || "";
-      const cls = /^charging/i.test(flow) ? "good" : /^discharging/i.test(flow) ? "bad" : "";
+      let cls = /^charging/i.test(flow) ? "good" : /^discharging/i.test(flow) ? "bad" : "";
       const ttg = this._st(p.ttg)?.state;
-      r.push(this._readout("Battery", this._fmt(p.soc), { cls, sub: [flow, ttg && ttg !== "unknown" ? ttg : ""].filter(Boolean).join(" · "), entity: p.soc }));
+      let sub = [flow, ttg && ttg !== "unknown" ? ttg : ""].filter(Boolean).join(" · ");
+      // TEMP-DCX: no flow/ttg sensors; show voltage + charging source instead.
+      if (!p.flow && (p.volt || p.charging)) {
+        const via = (p.charging || []).filter((id) => /^on$/i.test(this._st(id)?.state || ""))
+          .map((id) => (/_scc|solar/i.test(id) ? "Solar" : "AC"));
+        if (via.length) cls = "good";
+        sub = [p.volt ? this._fmt(p.volt) : "", via.length ? `Charging via ${via.join(" + ")}` : ""].filter(Boolean).join(" · ");
+      }
+      r.push(this._readout("Battery", this._fmt(p.soc), { cls, sub }));
     }
     if (this._compact) {
-      const plugged = p.shore_connected ? this._on(p.shore_connected) : true;
-      const inW = (this._num(p.solar) || 0) + (plugged ? this._num(p.shore) || 0 : 0);
+      const plugged = p.shore_is_voltage ? (this._num(p.shore) || 0) > 50 : p.shore_connected ? this._on(p.shore_connected) : true;
+      const inW = (this._num(p.solar) || 0) + (plugged && !p.shore_is_voltage ? this._num(p.shore) || 0 : 0);
       const outW = (this._num(p.dc) || 0) + (this._num(p.ac) || 0);
       if (p.solar || p.shore || p.dc || p.ac) r.push(this._readout("In / Out", `${this._watts(inW)} / ${this._watts(outW)}`, { cls: "txt", sub: "Solar + shore · loads" }));
     } else {
     if (p.solar) r.push(this._readout("Solar", this._fmt(p.solar), { entity: p.solar }));
     if (p.shore) {
-      const plugged = p.shore_connected ? this._on(p.shore_connected) : true;
-      r.push(this._readout("Shore", plugged ? this._fmt(p.shore) : "Unplugged", { cls: plugged ? "" : "dim", entity: p.shore }));
+      // TEMP-DCX: shore_is_voltage = grid voltage only (no watts); >50 V means plugged in.
+      const plugged = p.shore_is_voltage ? (this._num(p.shore) || 0) > 50 : p.shore_connected ? this._on(p.shore_connected) : true;
+      r.push(this._readout("Shore", plugged ? this._fmt(p.shore) : "Unplugged", { cls: plugged ? "" : "dim" }));
     }
     if (p.dc) r.push(this._readout("DC load", this._fmt(p.dc), { entity: p.dc }));
     if (p.ac) r.push(this._readout("AC load", this._fmt(p.ac), { entity: p.ac }));
@@ -375,6 +384,7 @@ class CcOverview extends CcBase {
         b.push(this._button(opt.replace(/\s*only$/i, ""), icon, `select:${p.inverter}:${opt}`, inv.state === opt));
       }
     }
+    if (p.inverter_switch) b.push(this._button("Inverter", "mdi:power", `toggle:${p.inverter_switch}`, this._on(p.inverter_switch))); // TEMP-DCX
     const alarm = (p.alarms || []).some((id) => this._on(id)) ||
       (p.alarm_sensors || []).some((id) => { const s = this._st(id)?.state; return s && !/^(no alarm|ok|unknown|unavailable)$/i.test(s); });
     return this._panel("power", r, b, { alarm });
@@ -416,12 +426,12 @@ class CcOverview extends CcBase {
       const litres = rows.filter((x) => x.litres !== null).reduce((a, x) => a + x.litres, 0);
       const hasLitres = rows.some((x) => x.litres !== null);
       const sub = [`${fresh.length} tank${fresh.length > 1 ? "s" : ""}`, hasLitres ? `${litres.toFixed(1)} L` : ""].filter(Boolean).join(" · ");
-      r.push(this._readout("Fresh", pct === null ? "—" : `${Math.round(pct)}%`, { sub, bar: pct ?? 0, barColor: this._tankColour(pct ?? 0, false) }));
+      r.push(this._readout("Fresh", pct === null ? "—" : `${Math.round(pct)}%`, { sub }));
     }
     const grey = tanks.find((t) => t.grey);
     if (grey) {
       const n = this._num(grey.level) ?? 0;
-      r.push(this._readout("Grey", this._fmt(grey.level), { sub: grey.remaining ? this._fmt(grey.remaining) : "", bar: n, barColor: this._tankColour(n, true) }));
+      r.push(this._readout("Grey", this._fmt(grey.level), { sub: grey.remaining ? this._fmt(grey.remaining) : "", cls: n >= 80 ? "bad" : n >= 60 ? "warn" : "" }));
     }
     const b = (p.buttons || []).map((x) => this._button(x.label, x.icon, `toggle:${x.id}`, this._on(x.id)));
     return this._panel("water", r, b);
@@ -830,6 +840,24 @@ function buildOverview(hass, cats, all, nav) {
   const power = cats.get("power") || [];
   const allPower = all.filter((e) => e.platform === P_POWER);
 
+  // TEMP-DCX: band-aid for Client X's OzXcorp DCX inverter over MQTT discovery.
+  // Remove once clever_caravan_power has a DCX backend (see TEMP_PATCHES.md).
+  const dcx = (key) => all.find((e) => e.platform === "mqtt" && e.unique_id === `ozxcorp_dcx_${key}`)?.entity_id;
+  const dcxSoc = !powerOne(allPower, "battery_soc") && dcx("battery_soc");
+  if (dcxSoc) {
+    panels.power = {
+      nav: nav("power"),
+      soc: dcxSoc,
+      volt: dcx("battery_voltage"),
+      charging: [dcx("charging_scc"), dcx("charging_ac")].filter(Boolean),
+      solar: dcx("pv1_charging_power"),
+      shore: dcx("grid_voltage"),
+      shore_is_voltage: true,
+      ac: dcx("ac_out_active_power"),
+      inverter_switch: dcx("relay"),
+    };
+  } else
+  // END TEMP-DCX
   if (power.length) {
     const altPower = powerKey(allPower, "alt_power");
     const altCharging = powerKey(allPower, "alt_charging");
@@ -933,7 +961,8 @@ function buildOverview(hass, cats, all, nav) {
     };
   }
 
-  const controls = byDomain(cats.get("controls") || [], "switch", "input_boolean", "fan");
+  const controls = byDomain(cats.get("controls") || [], "switch", "input_boolean", "fan")
+    .filter((e) => e.unique_id !== "ozxcorp_dcx_relay"); // TEMP-DCX: relay lives in Power
   if (controls.length) {
     panels.controls = {
       nav: nav("controls"),
