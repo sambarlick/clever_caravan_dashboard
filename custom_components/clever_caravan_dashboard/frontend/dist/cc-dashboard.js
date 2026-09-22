@@ -45,7 +45,7 @@ const TIER_ALLOW = {
 
 // Per-tier colour scheme. Category colours stay the same for readability.
 const THEMES = {
-  kokoda: { bg: "#17110c", panel: "#241b14", accent: "#e2703a", ink: "#f5ede6" },
+  kokoda: { bg: "#17110c", panel: "#241b14", accent: "#e2703a", ink: "#f5ede6", logo: "cc-kokoda-logo.png" },
 };
 
 const LABEL_PREFIX = "cc_";
@@ -255,6 +255,7 @@ const OV_CSS = `
 .wrap{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:12px}
 .top{display:flex;align-items:center;gap:10px;min-width:0}
 .logo{width:clamp(40px,7cqh,64px);height:clamp(40px,7cqh,64px);flex:none;border-radius:50%;box-shadow:0 0 0 2px var(--accent,transparent)}
+.logo.wide{width:auto;height:clamp(30px,5.5cqh,50px);border-radius:0;box-shadow:none}
 .hello{color:var(--accent,inherit);font-size:clamp(18px,3cqh,28px);font-weight:700;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chips{display:flex;gap:8px;overflow:hidden}
 .chip{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:6px 12px;font-size:15px;color:#cbd5e0;white-space:nowrap}
@@ -587,7 +588,8 @@ class CcOverview extends CcBase {
     const w = this._st(c.weather);
     if (w) chips.push(`<div class="chip opt"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon>${w.attributes.temperature != null ? `${Math.round(w.attributes.temperature)}°` : esc(w.state)}</div>`);
     chips.push(`<div class="chip"><ha-icon icon="mdi:clock-outline"></ha-icon>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>`);
-    return `<div class="top"><img class="logo" src="${ASSET_BASE}/cc-logo.png" alt="Clever Caravan">
+    const brandLogo = c.theme?.logo;
+    return `<div class="top"><img class="logo${brandLogo ? " wide" : ""}" src="${ASSET_BASE}/${brandLogo || "cc-logo.png"}" alt="${brandLogo ? "Kokoda" : "Clever Caravan"}">
       <div class="hello">Good ${part}${first ? `, ${esc(first)}` : ""}</div><div class="chips">${chips.join("")}</div></div>`;
   }
 
