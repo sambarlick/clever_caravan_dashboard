@@ -21,7 +21,9 @@ CONF_EXTRA_PLATFORMS = "extra_platforms"
 # access to HA settings.
 TIER_BASE = "base"
 TIER_PREMIUM = "premium"
-TIERS = [TIER_BASE, TIER_PREMIUM]
+TIER_CUSTOM = "custom"
+TIER_KOKODA = "kokoda"
+TIERS = [TIER_BASE, TIER_PREMIUM, TIER_CUSTOM, TIER_KOKODA]
 
 # Clever Caravan integrations. Always included, auto-discovered.
 OWNED_PLATFORMS = [

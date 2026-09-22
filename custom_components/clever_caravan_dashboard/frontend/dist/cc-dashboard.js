@@ -31,6 +31,23 @@ const CATS = {
 };
 const ORDER = ["power", "water", "climate", "lights", "controls", "location", "tyres", "security", "more"];
 
+// Tier gating: which third-party integrations each tier may show.
+// "custom" allows anything ticked in the integration's settings.
+const TIER_PREMIUM_PLATFORMS = [
+  "starlink", "shelly", "reolink", "mopeka", "bluetti",
+  "teltonika", "teltonika_rutx", "glinet", "gl_inet", "unifi", "unifiprotect",
+];
+const TIER_ALLOW = {
+  base: ["starlink"],
+  premium: TIER_PREMIUM_PLATFORMS,
+  kokoda: TIER_PREMIUM_PLATFORMS,
+};
+
+// Per-tier colour scheme. Category colours stay the same for readability.
+const THEMES = {
+  kokoda: { bg: "#17110c", panel: "#241b14", accent: "#e2703a", ink: "#f5ede6" },
+};
+
 const LABEL_PREFIX = "cc_";
 const WATER_RE = /(tank|water|pump|grey)/;
 const LIGHT_RE = /(light|lamp|spot|flood)/;
@@ -115,6 +132,13 @@ class CcBase extends HTMLElement {
   setConfig(config) {
     this._config = config;
     this._sig = null;
+    const t = config.theme;
+    if (t) {
+      this.style.setProperty("--bg", t.bg);
+      this.style.setProperty("--panel", t.panel);
+      this.style.setProperty("--accent", t.accent);
+      this.style.setProperty("--ink", t.ink);
+    }
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (ev) => this._click(ev));
@@ -230,8 +254,8 @@ const OV_CSS = `
 :host{height:calc(100dvh - var(--header-height,56px));padding:12px;container-type:size;container-name:host}
 .wrap{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:12px}
 .top{display:flex;align-items:center;gap:10px;min-width:0}
-.logo{width:clamp(40px,7cqh,64px);height:clamp(40px,7cqh,64px);flex:none}
-.hello{font-size:clamp(18px,3cqh,28px);font-weight:700;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.logo{width:clamp(40px,7cqh,64px);height:clamp(40px,7cqh,64px);flex:none;border-radius:50%;box-shadow:0 0 0 2px var(--accent,transparent)}
+.hello{color:var(--accent,inherit);font-size:clamp(18px,3cqh,28px);font-weight:700;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chips{display:flex;gap:8px;overflow:hidden}
 .chip{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:6px 12px;font-size:15px;color:#cbd5e0;white-space:nowrap}
 .chip ha-icon{--mdc-icon-size:18px;color:#67e8f9}.chip.away ha-icon{color:#718096}
@@ -753,6 +777,7 @@ function classify(hass, e) {
   const text = textOf(hass, e);
   const uid = e.unique_id || "";
 
+  if (/^ozxcorp_dcx_/.test(uid)) return "power"; // TEMP-DCX
   if (d === "light") return "lights";
   if (d === "camera") return "security";
   if (d === "device_tracker") return "location";
@@ -1044,7 +1069,11 @@ class CleverCaravanStrategy {
     if (!cfg) return messageDashboard("Clever Caravan is still initialising. Reload this page once **Clever Caravan: Dashboard** has finished starting.");
 
     const attrs = cfg.attributes;
-    const platforms = new Set([...OWNED_PLATFORMS, ...(Array.isArray(attrs.extra_platforms) ? attrs.extra_platforms : [])]);
+    const tier = attrs.tier || "base";
+    const picked = Array.isArray(attrs.extra_platforms) ? attrs.extra_platforms : [];
+    const allow = TIER_ALLOW[tier];
+    const extras = allow ? picked.filter((p) => allow.includes(p)) : picked; // no list = custom
+    const platforms = new Set([...OWNED_PLATFORMS, ...extras]);
 
     const cats = new Map();
     const all = [];
@@ -1063,7 +1092,10 @@ class CleverCaravanStrategy {
     // Tier hook: premium-only views go here (attrs.tier === "premium").
     const base = "/" + (window.location.pathname.split("/")[1] || "lovelace");
     const nav = (c) => (cats.has(c) ? `${base}/${c}` : "");
-    const views = [{ title: "Overview", path: "overview", icon: "mdi:caravan", type: "panel", cards: [buildOverview(hass, cats, all, nav)] }];
+    const theme = THEMES[tier];
+    const overview = buildOverview(hass, cats, all, nav);
+    if (theme) overview.theme = theme;
+    const views = [{ title: "Overview", path: "overview", icon: "mdi:caravan", type: "panel", cards: [overview] }];
 
     for (const c of ORDER) {
       if (!cats.has(c)) continue;
@@ -1076,6 +1108,7 @@ class CleverCaravanStrategy {
         type: "panel",
         cards: [{
           type: "custom:cc-view",
+          theme,
           cat: c,
           back: `${base}/overview`,
           map: byDomain(list, "device_tracker").map((e) => e.entity_id),
